@@ -6,15 +6,30 @@ import spinal.lib._
 
 // Define a Ram as a BlackBox
 case class Ram_1w_1r_2c(wordWidth: Int, addressWidth: Int, writeClock : ClockDomain, readClock : ClockDomain) extends BlackBox {
-  // TODO define Generics
+  addGeneric("addressWidth", addressWidth)
+  addGeneric("wordWidth", wordWidth)
 
-  // TODO define IO
+  val io = new Bundle {
+    val wr = new Bundle {
+      val clk  = in Bool()
+      val en   = in Bool()
+      val addr = in UInt(addressWidth bits)
+      val data = in Bits(wordWidth bits)
+    }
+    val rd = new Bundle {
+      val clk  = in Bool()
+      val en   = in Bool()
+      val addr = in UInt(addressWidth bits)
+      val data = out Bits(wordWidth bits)
+    }
+  }
 
-  // TODO define ClockDomains mappings
+  mapClockDomain(clockDomain = writeClock, clock=io.wr.clk)
+  mapClockDomain(clockDomain = readClock , clock=io.rd.clk)
 }
 
-// Create the top level and instanciate the Ram
-case class MemorySumming(writeClock : ClockDomain,sumClock : ClockDomain) extends Component {
+// Create the top level and instantiate the Ram
+case class MemorySumming(writeClock : ClockDomain, sumClock : ClockDomain) extends Component {
   val io = new Bundle {
     val wr = new Bundle {
       val en   = in Bool()
@@ -29,11 +44,47 @@ case class MemorySumming(writeClock : ClockDomain,sumClock : ClockDomain) extend
     }
   }
 
-  // TODO define the ram
+  val ram = new Ram_1w_1r_2c(
+    wordWidth = 16,
+    addressWidth = 8,
+    writeClock = writeClock,
+    readClock  = sumClock
+  )
 
-  // TODO connect the io.wr port to the ram
+  io.wr.en   <> ram.io.wr.en
+  io.wr.addr <> ram.io.wr.addr
+  io.wr.data <> ram.io.wr.data
 
   val sumArea = new ClockingArea(sumClock) {
-    // TODO define the memory read + summing logic
+    val counter = Reg(UInt(8 bits))
+    val active  = RegInit(False)
+
+    ram.io.rd.en := active
+    ram.io.rd.addr := counter
+
+    when(!active) {
+      active := io.sum.start
+      counter := 0
+    } otherwise {
+      counter := counter + 1
+      when(counter === counter.maxValue) {
+        active := False
+      }
+    }
+
+    val readDataValid = RegNext(active) init(False)
+    val sum = Reg(UInt(16 bits))
+    when(readDataValid) {
+      sum := sum + ram.io.rd.data.asUInt
+    } otherwise {
+      sum := 0
+    }
+
+    io.sum.done := False
+    when(readDataValid.fall(initAt = False)) {
+      io.sum.done := True
+    }
   }
+
+  io.sum.value := sumArea.sum
 }
